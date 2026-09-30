@@ -1,0 +1,30 @@
+# The `@deepseek-ai` tree here is a local junction to the harness's own
+# node_modules, created only so the integration tests can resolve their peers
+# without a full install. It is not part of the package and must not be
+# published or committed.
+node_modules/
+
+# npm pack output
+*.tgz
+
+# logs & env
+*.log
+.env
+.env.*
+
+# OS / editor
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/*
+!.vscode/extensions.json
+
+# DSH credential stores — never commit. DSH keeps API keys and app secrets in
+# these plaintext YAML documents under $DSH_HOME.
+.credentials.yaml
+.credentials.yaml.*
+**/.credentials.yaml
+**/.credentials.yaml.*
+
+# ad-hoc local scratch
+.tmp*/
