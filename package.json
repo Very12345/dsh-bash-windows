@@ -1,7 +1,7 @@
 {
   "name": "@very12345/dsh-bash-windows",
-  "version": "0.1.0",
-  "description": "Git-for-Windows bash executor for DeepSeek Harness: a ctx.shell provider that runs commands through the installed Git Bash, so an agent preset can offer a bash tool on Windows without WSL.",
+  "version": "0.2.0",
+  "description": "One-click Git Bash replacement for PowerShell across the four built-in DSH modes on Windows",
   "type": "module",
   "license": "MIT",
   "author": "Very12345",
@@ -28,14 +28,17 @@
     ".": "./src/index.js",
     "./bash": "./src/bash.js",
     "./cordis.patch.yml": "./cordis.patch.yml",
-    "./presets/bash-windows.patch.yml": "./presets/bash-windows.patch.yml",
-    "./package.json": "./package.json"
+    "./package.json": "./package.json",
+    "./client": "./src/client.js"
   },
   "dsh": {
     "bundle": {
-      "patch": [
-        "./cordis.patch.yml",
-        "./presets/bash-windows.patch.yml"
+      "patch": "./cordis.patch.yml"
+    },
+    "client": {
+      "platform": "web",
+      "inject": [
+        "@deepseek-ai/dsh-client-ui-settings"
       ]
     }
   },
@@ -45,15 +48,71 @@
     "@deepseek-ai/dsh-shell": "^0.2.0-rc.1",
     "@deepseek-ai/dsh-subprocess": "^0.2.0-rc.1",
     "@deepseek-ai/dsh-timeout": "^0.2.0-rc.1",
-    "@deepseek-ai/schemastery": "^3.18.4"
+    "@deepseek-ai/schemastery": "^3.18.4",
+    "@deepseek-ai/dsh-agent": "^0.2.0-rc.2",
+    "@deepseek-ai/dsh-agent-preset-registry": "^0.2.0-rc.2",
+    "@deepseek-ai/dsh-tools": "^0.2.0-rc.2",
+    "@deepseek-ai/dsh-tool-bash": "^0.2.0-rc.2",
+    "@deepseek-ai/dsh-tool-bash-persistent": "^0.2.0-rc.2",
+    "@deepseek-ai/dsh-terminal": "^0.2.0-rc.2",
+    "@deepseek-ai/dsh-terminal-bash": "^0.2.0-rc.2",
+    "@deepseek-ai/dsh-settings": "^0.2.0-rc.2",
+    "@deepseek-ai/dsh-scope": "^0.2.0-rc.2",
+    "@deepseek-ai/dsh-system-prompt": "^0.2.0-rc.2",
+    "@deepseek-ai/dsh-shell-env": "^0.2.0-rc.2"
   },
   "peerDependenciesMeta": {
-    "@deepseek-ai/cordis": { "optional": true },
-    "@deepseek-ai/dsh-bash-local": { "optional": true },
-    "@deepseek-ai/dsh-shell": { "optional": true },
-    "@deepseek-ai/dsh-subprocess": { "optional": true },
-    "@deepseek-ai/dsh-timeout": { "optional": true },
-    "@deepseek-ai/schemastery": { "optional": true }
+    "@deepseek-ai/cordis": {
+      "optional": true
+    },
+    "@deepseek-ai/dsh-bash-local": {
+      "optional": true
+    },
+    "@deepseek-ai/dsh-shell": {
+      "optional": true
+    },
+    "@deepseek-ai/dsh-subprocess": {
+      "optional": true
+    },
+    "@deepseek-ai/dsh-timeout": {
+      "optional": true
+    },
+    "@deepseek-ai/schemastery": {
+      "optional": true
+    },
+    "@deepseek-ai/dsh-agent": {
+      "optional": true
+    },
+    "@deepseek-ai/dsh-agent-preset-registry": {
+      "optional": true
+    },
+    "@deepseek-ai/dsh-tools": {
+      "optional": true
+    },
+    "@deepseek-ai/dsh-tool-bash": {
+      "optional": true
+    },
+    "@deepseek-ai/dsh-tool-bash-persistent": {
+      "optional": true
+    },
+    "@deepseek-ai/dsh-terminal": {
+      "optional": true
+    },
+    "@deepseek-ai/dsh-terminal-bash": {
+      "optional": true
+    },
+    "@deepseek-ai/dsh-settings": {
+      "optional": true
+    },
+    "@deepseek-ai/dsh-scope": {
+      "optional": true
+    },
+    "@deepseek-ai/dsh-system-prompt": {
+      "optional": true
+    },
+    "@deepseek-ai/dsh-shell-env": {
+      "optional": true
+    }
   },
   "scripts": {
     "test": "node --test \"test/*.test.js\""
@@ -63,7 +122,6 @@
   },
   "files": [
     "src",
-    "presets",
     "cordis.patch.yml",
     "README.md",
     "LICENSE"

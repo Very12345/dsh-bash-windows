@@ -1,19 +1,5 @@
-# Patch layer for @very12345/dsh-bash-windows.
-#
-# Deliberately empty. This bundle adds a `ctx.shell` PROVIDER, not a host row:
-# the provider is referenced by name from the `bash-windows` agent preset
-# (./presets/bash-windows.patch.yml), which owns the isolate realm it must run
-# in. Mounting it here would register a second `ctx.shell` on the host plane --
-# where `dsh-pwsh-sandbox` already owns that service on Windows -- and cordis
-# would fail loud on the duplicate registration.
-#
-# Keeping the file present (rather than dropping it from `dsh.bundle.patch`)
-# means the plugin installs through the same bundle path as every other
-# third-party plugin, and a deployment that later wants to change the DEFAULT
-# agent preset has an obvious place to do it, for example:
-#
-#   - id: agent-preset-registry
-#     name: '@deepseek-ai/dsh-agent-preset-registry'
-#     config:
-#       default: bash-windows
-[]
+- insert:
+    - id: git-bash-windows
+      name: '@very12345/dsh-bash-windows'
+      config:
+        enabled: false

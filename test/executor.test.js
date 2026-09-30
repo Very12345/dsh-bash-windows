@@ -25,7 +25,6 @@ import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 
 const here = dirname(fileURLToPath(import.meta.url));
-const presetPath = join(here, '..', 'presets', 'bash-windows.patch.yml');
 
 /** Resolve an optional peer, or undefined when it is not installed. */
 async function optionalImport(specifier) {
@@ -182,8 +181,13 @@ test('background processes stream output and can be killed', async (t) => {
     const spec = fixture.shell.resolve({ command: 'echo first; sleep 30', onExpiry: 'none' });
     const proc = await fixture.shell.execute(spec);
     assert.equal(proc.status, 'running');
-    await new Promise((resolve) => { setTimeout(resolve, 1500); });
-    assert.match(proc.readOutput().delta, /first/);
+    let output = '';
+    const readyBy = Date.now() + 8000;
+    while (!output.includes('first') && Date.now() < readyBy) {
+      output += proc.readOutput().delta;
+      if (!output.includes('first')) await new Promise(resolve => setTimeout(resolve, 100));
+    }
+    assert.match(output, /first/);
     assert.equal(proc.kill(), true);
     await proc.done;
     assert.equal(proc.status, 'killed');
@@ -254,8 +258,8 @@ test('an isolated shell group keeps the executor out of the root realm', async (
   await subprocessFiber;
   const groupFiber = ctx.plugin({
     name: 'shell-realm',
-    apply(inner) {
-      inner.isolate('shell');
+    apply(parent) {
+      const inner = parent.isolate('shell');
       inner.plugin(self.GitBashExecutor, { timeoutMs: 30000 });
     },
   });
@@ -263,7 +267,7 @@ test('an isolated shell group keeps the executor out of the root realm', async (
 
   try {
     assert.deepEqual(
-      registryModule.leakedServices(ctx, groupFiber.fiber),
+      registryModule.leakedServices(ctx, groupFiber),
       [],
       'the isolate group must not leak services into the root realm',
     );
@@ -273,11 +277,9 @@ test('an isolated shell group keeps the executor out of the root realm', async (
   }
 });
 
-test('the preset file declares the bash executor and drops pwsh', () => {
-  const text = readFileSync(presetPath, 'utf8');
-  assert.match(text, /id: preset-bash-windows/);
-  assert.match(text, /id: bash-windows/);
-  assert.match(text, /name: '@very12345\/dsh-bash-windows'/);
-  assert.match(text, /isolate:\s*\n\s*shell: true/);
-  assert.ok(!text.includes('tool-pwsh'), 'the pwsh tool must not be mounted in this preset');
+test('the bundle contributes a disabled switch rather than a separate preset', () => {
+  const text = readFileSync(join(here, '..', 'cordis.patch.yml'), 'utf8');
+  assert.match(text, /id: git-bash-windows/);
+  assert.match(text, /enabled: false/);
+  assert.ok(!text.includes('agent-preset'));
 });

@@ -51,7 +51,7 @@ const DEFAULT_MAX_SPILL_BYTES = 64 * 1024 * 1024;
  *
  * Registers as `ctx.shell` (the `ShellExecutor` base calls `super(ctx, 'shell')`),
  * so it must be mounted inside an isolated realm when the host composition
- * already provides a shell -- which is what the `bash-windows` agent preset
+ * already provides a shell -- which is what the per-agent switch overlay
  * does.
  */
 export class GitBashExecutor extends LocalBashExecutor {
