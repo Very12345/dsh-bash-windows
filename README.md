@@ -27,11 +27,37 @@ Git Bash 不能在 Windows ACL 受限 token 下启动，因此启用后该终端
 
 从旧版独立「Bash 模式」迁移时，请在四种内置模式中使用新开关；插件不改写旧对话的历史和模式记录。
 
+## 在 Bash 中调用 Windows 命令
+
+工具里的命令是 Bash 源码。Bash 双引号会展开 `$变量`、`$_` 和命令替换；PowerShell 的 `$_` 必须保护好再传入。例如：
+
+```bash
+MSYS2_ARG_CONV_EXCL='*' powershell.exe -NoProfile -Command 'Get-Process | Where-Object { $_.ProcessName -match "Wei" }'
+```
+
+复杂引号或多行脚本可使用带单引号分隔符的 here-doc；非 ASCII 脚本也可用 UTF-16LE base64 的 `-EncodedCommand`，避免 Windows PowerShell 的输入编码差异。
+
+```bash
+powershell.exe -NoProfile -NonInteractive -Command - <<'PWSH'
+1,2,3 | ForEach-Object { $_ * 2 }
+PWSH
+```
+
+MSYS2 还会把 Windows 原生命令的 `/FI`、`/c` 等参数识别成 POSIX 路径。只对需要的那条原生命令关闭转换，保留其他命令的正常路径适配：
+
+```bash
+MSYS2_ARG_CONV_EXCL='*' tasklist.exe /FI "IMAGENAME eq Weixin.exe" /FO CSV /NH
+MSYS2_ARG_CONV_EXCL='*' cmd.exe /d /c "echo ok"
+```
+
+0.2.2 将这些边界和安全示例直接加入四种模式的 Bash 工具描述，包含 PTC SDK 和极简持久终端。执行器继续原样传递命令，不猜测或改写用户的 `$` 表达式。
+
 ## 实现与维护
 
 - `src/switcher.js`：持久开关、设置路由和已有／新建会话同步。
 - `src/overrides.js`：会话层工具覆盖，关闭时撤销限制并恢复原工具。
 - `src/executor.js`：继承官方 Bash 执行器的超时、输出保留及后台进程能力。
+- `src/guidance.js`：四种模式通用的 Bash / PowerShell 引号与 MSYS 参数转换说明。
 - `src/client.js`：DSH 原生设置页中的开关。
 - `cordis.patch.yml`：官方 bundle 安装入口，默认关闭。
 - `test/`：路径解析、真实命令执行、工具注册与四种模式的恢复测试。

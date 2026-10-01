@@ -283,3 +283,22 @@ test('the bundle contributes a disabled switch rather than a separate preset', (
   assert.match(text, /enabled: false/);
   assert.ok(!text.includes('agent-preset'));
 });
+
+test('PowerShell pipeline variables survive Bash single quotes and quoted heredocs',async t=>{
+ const fixture=await composeFixture();if(!fixture){t.skip('DSH peers unavailable');return;}
+ try{
+  const quoted=await run(fixture.shell,{command:`MSYS2_ARG_CONV_EXCL='*' powershell.exe -NoProfile -Command '1,2,3 | ForEach-Object { $_ * 2 }'`});assert.equal(quoted.exitCode,0);assert.deepEqual(quoted.stdout.text.trim().split(/\r?\n/),['2','4','6']);
+  const heredoc=await run(fixture.shell,{command:`powershell.exe -NoProfile -NonInteractive -Command - <<'PWSH'
+1,2,3 | ForEach-Object { $_ * 3 }
+PWSH`});assert.equal(heredoc.exitCode,0);assert.deepEqual(heredoc.stdout.text.trim().split(/\r?\n/),['3','6','9']);
+  const broken=await run(fixture.shell,{command:`echo --sentinel-- >/dev/null; powershell.exe -NoProfile -Command "Write-Output '$_.ProcessName'"`});assert.match(broken.stdout.text,/--sentinel--\.ProcessName/,'Bash expansion reproduces the feedback; executor does not rewrite source');
+ }finally{await fixture.dispose();}
+});
+test('native Windows slash options are retained with a per-command MSYS override',async t=>{
+ const fixture=await composeFixture();if(!fixture){t.skip('DSH peers unavailable');return;}
+ try{
+  const tasklist=await run(fixture.shell,{command:`MSYS2_ARG_CONV_EXCL='*' tasklist.exe /FI "PID eq ${process.pid}" /FO CSV /NH`});assert.equal(tasklist.exitCode,0);assert.ok(tasklist.stdout.text.includes('"'+process.pid+'"'));
+  const cmd=await run(fixture.shell,{command:`MSYS2_ARG_CONV_EXCL='*' cmd.exe /d /c "echo CMD_FLAG_OK"`});assert.equal(cmd.exitCode,0);assert.match(cmd.stdout.text,/CMD_FLAG_OK/);
+  const bash=await run(fixture.shell,{command:`value=BASH_VALUE; printf '%s\\n' "$value" "$(printf substitution)"`});assert.equal(bash.exitCode,0);assert.match(bash.stdout.text,/BASH_VALUE\nsubstitution/);
+ }finally{await fixture.dispose();}
+});

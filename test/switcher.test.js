@@ -54,6 +54,9 @@ test('all four built-in modes swap only pwsh and restore it when disabled', asyn
     assert.equal(root.get('tools').get('pwsh', agent), undefined);
     const bash = root.get('tools').get('bash', agent);
     assert.ok(bash);
+    assert.match(bash.description,/Git for Windows Bash/);
+    assert.match(bash.description,/MSYS2_ARG_CONV_EXCL/);
+    assert.match(bash.description,/PowerShell's pipeline object/);
     if (preset === 'ptc') {
       assert.deepEqual(root.get('tools').wireSchemas(agent).schemas.map((s) => s.name), ['run_code']);
       assert.ok(root.get('tools').sdkSchemas(agent).some((s) => s.name === 'bash'));

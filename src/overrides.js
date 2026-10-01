@@ -1,3 +1,4 @@
+import {withGitBashGuidance} from './guidance.js';
 import * as bashTool from '@deepseek-ai/dsh-tool-bash';
 import * as persistentBashTool from '@deepseek-ai/dsh-tool-bash-persistent';
 import TerminalService from '@deepseek-ai/dsh-terminal';
@@ -19,9 +20,10 @@ export async function createShellOverride(agent, preset, options = {}) {
   };
   const capture = {
     register(definition) {
-      record.definition = definition;
+      const advertised=withGitBashGuidance(definition);
+      record.definition = advertised;
       expose();
-      return () => { if (record.definition === definition) { record.definition = null; expose(); } };
+      return () => { if (record.definition === advertised) { record.definition = null; expose(); } };
     }
   };
   record.group = agent.ctx.plugin({
