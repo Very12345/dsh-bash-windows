@@ -1,6 +1,6 @@
 {
   "name": "@very12345/dsh-bash-windows",
-  "version": "0.2.3",
+  "version": "0.2.4",
   "description": "One-click Git Bash replacement for PowerShell across the four built-in DSH modes on Windows",
   "type": "module",
   "license": "MIT",
@@ -124,6 +124,7 @@
     "src",
     "cordis.patch.yml",
     "README.md",
-    "LICENSE"
+    "LICENSE",
+    "assets/settings-icon.svg"
   ]
 }
