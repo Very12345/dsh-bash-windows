@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { Readable } from 'node:stream';
+import fs from 'node:fs/promises';import path from 'node:path';import {tmpdir} from 'node:os';
 
 async function peers(t) {
   if (process.platform !== 'win32') { t.skip('Git Bash integration requires Windows'); return null; }
@@ -76,23 +77,25 @@ test('all four built-in modes swap only pwsh and restore it when disabled', asyn
   }
 });
 
-test('the setting route persists the switch through DSH and can turn it back off', async (t) => {
+test('the setting route persists locally without profile reload and can turn it back off', async (t) => {
   const modules = await peers(t); if (!modules) return;
   const { GitBashSwitcher } = await import('../src/switcher.js');
   const ctx = new modules.cordis.Context();
   const routes = new Map(), writes = [];
-  let enabled = false;
+  const home=await fs.mkdtemp(path.join(tmpdir(),'dsh-bash-prefs-'));
+  ctx.provide('profileContext',{home,dir:path.join(home,'profiles/desktop')});
+  const enabled = false;
   let controller;
   ctx.provide('agents', { list: () => [] });
   ctx.provide('agentPresets', { composedPreset: () => 'standard' });
   ctx.provide('settings', {
     configure: () => () => {},
-    async update(namespace, values) { writes.push({ namespace, values }); enabled = values.enabled; }
+    async update(namespace, values) { writes.push({ namespace, values });throw new Error('Profile reload must not be reached'); }
   });
   ctx.provide('webServer', { register(route) { routes.set(route.path, route); return () => routes.delete(route.path); } });
   controller = new GitBashSwitcher(ctx, { enabled: { get: () => enabled } });
   await controller.pending;
-  t.after(async () => { controller.closed = true; await controller.pending; });
+  t.after(async () => { controller.closed = true; await controller.pending;await ctx.fiber.dispose();await fs.rm(home,{recursive:true,force:true}); });
   const route = routes.get('/plugins/git-bash-windows');
   assert.ok(route);
   async function toggle(enabled) {
@@ -103,5 +106,6 @@ test('the setting route persists the switch through DSH and can turn it back off
     assert.equal(body.enabled, enabled);
   }
   await toggle(true); await toggle(false);
-  assert.deepEqual(writes.map((entry) => [entry.namespace, entry.values.enabled]), [['git-bash-windows', true], ['git-bash-windows', false]]);
+  assert.deepEqual(writes, []);
+  assert.equal(await controller.preferences.load(),false);
 });

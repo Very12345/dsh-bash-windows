@@ -10,7 +10,7 @@ dsh plugin --profile desktop add github:Very12345/dsh-bash-windows
 
 也可执行 `npm pack` 后通过 DSH 插件管理器安装本地包。npm 公共仓库尚未发布此 scoped 包。需要 Windows、Git for Windows 和 DSH 0.2.0-rc.2 或兼容版本；开发环境 Node.js >= 22。
 
-更新后重启 DSH，在「设置 → Git Bash」点击开关。开关默认关闭，状态由 DSH 配置服务持久化到当前 profile。已有四种模式会话和后续创建的会话都使用该设置。
+更新后重启 DSH，在「设置 → Git Bash」点击开关。开关默认关闭。状态按当前 profile 独立保存到 `$DSH_HOME/git-bash-windows/profile-<hash>.json`；切换仅原位更新已有 Agent 的终端工具，不通过宿主 ConfigEditor 重载整个 profile。旧版 `cordis.patch.yml` 中的 `enabled` 保留，尚无独立状态文件时作为初始值。已有四种模式会话和后续创建的会话都使用该设置。
 
 ## 行为
 
@@ -26,6 +26,12 @@ dsh plugin --profile desktop add github:Very12345/dsh-bash-windows
 Git Bash 不能在 Windows ACL 受限 token 下启动，因此启用后该终端使用当前用户权限执行，不提供 Windows ACL 文件沙箱；设置页会明确提示这一行为。其他工具的权限、审批和执行仍由 DSH 管理。
 
 从旧版独立「Bash 模式」迁移时，请在四种内置模式中使用新开关；插件不改写旧对话的历史和模式记录。
+
+## 0.2.5 切换修复
+
+在 DSH 0.2.0-rc.2 同时启用 SSH 插件时，旧版开关调用 settings.update，触发 ConfigEditor 的整套 profile 协调。会话服务重建时可能重复注册文件上传 Agent resolver，随后 sessionController 不可用，出现 command directory warmup failed / session/follow 错误并阻断后续发送。
+
+新版开关独立持久化，原位更换工具，不触发这条重载链。保存失败会恢复原开关和工具；正在执行的命令继续保留原执行环境。已进入失效状态的宿主需完整退出重启，插件更新不会修复已失效的旧服务实例。
 
 ## 在 Bash 中调用 Windows 命令
 
@@ -54,7 +60,8 @@ MSYS2_ARG_CONV_EXCL='*' cmd.exe /d /c "echo ok"
 
 ## 实现与维护
 
-- `src/switcher.js`：持久开关、设置路由和已有／新建会话同步。
+- `src/switcher.js`：开关、设置路由和已有／新建会话同步。
+- `src/preferences.js`：按 profile 独立保存开关，原子写入、启动恢复和失败回滚。
 - `src/overrides.js`：会话层工具覆盖，关闭时撤销限制并恢复原工具。
 - `src/executor.js`：继承官方 Bash 执行器的超时、输出保留及后台进程能力。
 - `src/guidance.js`：四种模式通用的 Bash / PowerShell 引号与 MSYS 参数转换说明。
@@ -68,6 +75,15 @@ npm pack --dry-run
 ```
 
 集成测试使用 DSH SDK、真实 Git Bash 和持久终端，未安装 SDK 或非 Windows 时相应测试跳过。`node_modules` 中的 SDK 链接是本地测试资源，不进入 Git 或分发包。
+
+`test/host-smoke.mjs` 在独立临时 profile 安装本插件和指定 SSH tarball，通过完整官方 Web 界面检查开关、命令菜单、模型目录 RPC 及配置文件不变。需要 Playwright 和 Edge；可用 `DSH_BASH_PLAYWRIGHT_MODULE` 指向现有 Playwright 的 `index.mjs`，`DSH_BASH_TEST_APP` / `DSH_BASH_TEST_CLI` 指定官方运行入口。
+
+```sh
+npm pack --pack-destination .tmp --ignore-scripts
+node test/host-smoke.mjs --ssh-package /path/to/dsh-ssh-workspace.tgz
+```
+
+0.2.5 在 Windows 的 32 项测试中 31 项通过；一项仅用于未安装 Git Bash 环境的错误路径测试，因本机已安装 Git Bash 跳过。Bash＋SSH 的隔离官方宿主中，连续四次开关切换后命令预加载与模型目录仍可用，profile patch 保持不变。
 
 ## 许可证
 

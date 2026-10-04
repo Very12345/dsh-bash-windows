@@ -1,15 +1,18 @@
 import z from '@deepseek-ai/schemastery';
 import { resolveGitBashPath } from './bash.js';
 import { createShellOverride, SUPPORTED_PRESETS } from './overrides.js';
+import {SwitchPreferences} from './preferences.js';
 
 const valueOf = (value) => value?.get ? value.get() : value;
 const ROUTE = '/plugins/git-bash-windows';
 
 export class GitBashSwitcher {
-  static inject = ['agents', 'agentPresets', 'settings'];
+  static inject = ['agents', 'agentPresets', 'settings', 'profileContext'];
   static Config = z.object({ enabled: z.boolean().default(false).volatile(), bashPath: z.string(), loginShell: z.boolean().default(false) });
-  constructor(ctx, config) {
+  constructor(ctx, config, preferences = new SwitchPreferences(ctx.get('profileContext'))) {
     this.ctx = ctx; this.config = config; this.records = new Map(); this.creating = new Map(); this.pending = Promise.resolve(); this.closed = false; this.error = '';
+    this.preferences=preferences;this.storedEnabled=undefined;
+    this.ready=preferences.load().then(enabled=>{this.storedEnabled=enabled;}).catch(error=>{this.error=error.message;ctx.logger.warn(error);});
     ctx.effect(() => ctx.settings.configure({ auto: false }));
     ctx.provide('gitBashSwitch', this);
     ctx.on('agent/created', ({ agent }) => this.synchronizeAgent(agent));
@@ -21,9 +24,10 @@ export class GitBashSwitcher {
     ctx.effect(() => async () => { this.closed = true; await this.pending.catch(() => {}); await Promise.all([...this.records.values()].map((record) => record.dispose())); this.records.clear(); });
     void this.synchronize().catch((error) => { this.error = error.message; ctx.logger.warn(error); });
   }
-  get enabled() { return valueOf(this.config.enabled) === true; }
+  get enabled() { return this.storedEnabled ?? (valueOf(this.config.enabled) === true); }
   options() { return { bashPath: valueOf(this.config.bashPath), loginShell: valueOf(this.config.loginShell) === true }; }
   async synchronizeAgent(agent) {
+    await this.ready;
     if (this.closed) return;
     const preset = this.ctx.agentPresets.composedPreset(agent.ctx);
     let record = this.records.get(agent);
@@ -47,25 +51,33 @@ export class GitBashSwitcher {
   }
   synchronize() {
     const run = this.pending.catch(() => {}).then(async () => {
+      await this.ready;
       if (this.closed) return;
       for (const agent of this.ctx.agents.list()) await this.synchronizeAgent(agent);
     });
     this.pending = run; return run;
   }
+  setEnabled(enabled) {
+    const run=this.pending.catch(()=>{}).then(async()=>{
+      await this.ready;if(this.closed)throw new Error('Git Bash switch is closed');
+      if(enabled)resolveGitBashPath(this.options());
+      const previous=this.storedEnabled;this.storedEnabled=enabled;
+      try{for(const agent of this.ctx.agents.list())await this.synchronizeAgent(agent);await this.preferences.save(enabled);this.error='';}
+      catch(error){this.storedEnabled=previous;try{for(const agent of this.ctx.agents.list())await this.synchronizeAgent(agent);}catch(restore){this.ctx.logger.warn(restore);}throw error;}
+    });
+    this.pending=run;return run;
+  }
   status() { return { ok: true, enabled: this.enabled, supported: process.platform === 'win32', error: this.error }; }
   routes(ctx) {
     const send = (res, status, data) => { res.writeHead(status, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' }); res.end(JSON.stringify(data)); };
     ctx.effect(() => ctx.webServer.register({ kind: 'exact', path: ROUTE, handler: async (req, res) => {
+      await this.ready;
       if (req.method === 'GET') return send(res, 200, this.status());
       if (req.method !== 'POST') return send(res, 405, { ok: false, error: 'Method not allowed' });
       try {
         let body = ''; for await (const chunk of req) { body += chunk; if (body.length > 4096) throw new Error('Request too large'); }
         const input = JSON.parse(body || '{}'); if (typeof input.enabled !== 'boolean') throw new Error('enabled must be a boolean');
-        if (input.enabled) resolveGitBashPath(this.options());
-        const previous = this.enabled;
-        await this.ctx.settings.update('git-bash-windows', { enabled: input.enabled });
-        try { await this.synchronize(); this.error = ''; }
-        catch (error) { await this.ctx.settings.update('git-bash-windows', { enabled: previous }); await this.synchronize(); throw error; }
+        await this.setEnabled(input.enabled);
         send(res, 200, this.status());
       } catch (error) { this.error = error.message; send(res, 400, { ...this.status(), ok: false }); }
     } }));
