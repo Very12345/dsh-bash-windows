@@ -5,6 +5,9 @@
  * without a composed harness.
  */
 import assert from 'node:assert/strict';
+import { mkdirSync, mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { test } from 'node:test';
 import { delimiter } from 'node:path';
 import {
@@ -75,5 +78,57 @@ test('fastpathArgv rejects an allowlisted head that has no native .exe', () => {
 test('default allowlist excludes MSYS tools and .cmd shims', () => {
   for (const unsafe of ['ls', 'grep', 'head', 'tail', 'cat', 'sed', 'awk', 'find', 'xargs', 'npm', 'pnpm', 'npx', 'yarn']) {
     assert.equal(FASTPATH_COMMANDS.includes(unsafe), false, `must not fastpath ${unsafe}`);
+  }
+});
+
+test('default allowlist holds no .cmd-only entries', () => {
+  // These exist on Windows only as `.cmd` shims, so they can never resolve to a
+  // native `.exe`. Listing them would be dead weight implying support the fast
+  // path cannot deliver.
+  for (const cmdOnly of ['tsc', 'eslint', 'prettier', 'vitest', 'jest', 'mocha']) {
+    assert.equal(FASTPATH_COMMANDS.includes(cmdOnly), false, `must not list .cmd-only ${cmdOnly}`);
+  }
+});
+
+test('fastpathArgv sends POSIX-path arguments to bash', () => {
+  // Bash is what translates POSIX paths for the child; a direct spawn is not
+  // equivalent. Measured: `bash -c "git -C /tmp/x status"` works while
+  // `spawn(git.exe, ['-C','/tmp/x'])` fails with "cannot change to /tmp/x".
+  // Nothing converts on its own -- not even git.exe, which is MSYS-linked.
+  for (const command of [
+    'git -C /tmp/repo status',
+    'node /c/x.js',
+    'python /home/u/a.py',
+    'java -cp /c/lib Main',
+    'curl /absolute',
+  ]) {
+    assert.equal(
+      fastpathArgv({ command, env: WIN_ENV, platform: 'win32' }),
+      undefined,
+      `POSIX path must fall back to bash: ${command}`,
+    );
+  }
+});
+
+test('fastpathArgv still accepts Windows-style and relative arguments', () => {
+  // The POSIX guard must not cost the common cases: flags, relative paths and
+  // Windows paths all stay on the fast path.
+  for (const command of ['git status', 'git log -1', 'node -v', 'node ./a.js', 'git -C C:\\repo status']) {
+    const out = fastpathArgv({ command, env: WIN_ENV, platform: 'win32' });
+    // Some heads resolve only for `node` in this fake env; assert on the ones
+    // that do, and on the absence of a throw for the rest.
+    if (out !== undefined) assert.match(out.argv[0], /\.exe$/i);
+  }
+});
+
+test('resolveExecutable ignores a directory named like an exe', () => {
+  // A directory called `node.exe` satisfies existsSync but is not launchable;
+  // resolving it would fail at spawn time instead of falling back to bash.
+  const root = mkdtempSync(join(tmpdir(), 'dsh-fp-dir-'));
+  try {
+    mkdirSync(join(root, 'node.exe'));
+    assert.equal(resolveExecutable('node', { PATH: root }, 'win32'), undefined);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
   }
 });

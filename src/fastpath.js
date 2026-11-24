@@ -24,22 +24,57 @@
  *
  * @module @very12345/dsh-bash-windows/fastpath
  */
-import { existsSync } from 'node:fs';
+import assert from 'node:assert/strict';
+import { statSync } from 'node:fs';
 import { delimiter, join } from 'node:path';
 
 /**
- * Shell metacharacters. A command containing any of these is left to bash —
- * pipes, redirects, globs, quoting, variable expansion and history all need a
- * shell, and re-implementing them is exactly what the prototype's README lists
- * as its known limitation. Matches the shd (`HasShellMeta`) set.
+ * Characters indicating that bash itself must interpret the command.
+ *
+ * Note `/` is deliberately not here: a leading slash is a *separate* hazard
+ * caught by {@link hasPosixPathArgument}, because it is not shell syntax but a
+ * path the shell layer would have translated.
  */
 const SHELL_METACHAR = /[|&;<>()$`\\"'*?[\]#~=%{}!\n\r]/;
 
 /**
- * Command heads allowed on the fast path. Every entry is a real Windows
- * `.exe` on PATH (not an MSYS shim, not a `.cmd`), verified by the resolver at
- * runtime. An unlisted but safe command simply pays the old bash cost — the
- * failure mode of an incomplete list is "no speedup", never "wrong output".
+ * Whether any argument looks like a POSIX absolute path.
+ *
+ * Why this matters more than it looks: spawning directly is not equivalent to
+ * spawning through bash, because **bash is what translates POSIX paths into
+ * Windows ones** for the child. Measured on this machine:
+ *
+ *     bash -c "git -C /tmp/x status"   -> works
+ *     spawn(git.exe, ['-C','/tmp/x'])  -> fatal: cannot change to '/tmp/x'
+ *
+ * So `git` itself does not convert either — nothing does, the shell layer
+ * does. Feeding `/c/...` or `/tmp/...` straight to a child silently changes
+ * the meaning of the command, which is exactly the "wrong output" failure the
+ * allowlist design exists to prevent.
+ *
+ * A conservative rule is enough here: an argument starting with `/` means bash.
+ * That keeps `git status`, `git log`, `node -v` and friends on the fast path
+ * while any POSIX-path argument goes the old way.
+ *
+ * @param {string[]} tokens argv, head included.
+ * @returns {boolean} true when bash must be used.
+ */
+function hasPosixPathArgument(tokens) {
+  return tokens.some((token) => token.startsWith('/'));
+}
+
+/**
+ * Command heads allowed on the fast path.
+ *
+ * Every entry must be a real Windows `.exe` reachable on `PATH` (not an MSYS
+ * shim, not a `.cmd`), which the resolver re-checks at runtime. An unlisted but
+ * safe command simply pays the old bash cost — the failure mode of an
+ * incomplete list is "no speedup", never "wrong output".
+ *
+ * `.cmd`-only tools are deliberately absent: `tsc`, `eslint`, `prettier`,
+ * `vitest`, `jest` and `mocha` are all `.cmd` shims on Windows, so they can
+ * never resolve to a native `.exe`. Listing them would be dead weight that
+ * suggests support the fast path cannot deliver.
  */
 export const FASTPATH_COMMANDS = Object.freeze([
   'git',
@@ -60,12 +95,6 @@ export const FASTPATH_COMMANDS = Object.freeze([
   'go',
   'cargo',
   'rustc',
-  'tsc',
-  'eslint',
-  'prettier',
-  'vitest',
-  'jest',
-  'mocha',
 ]);
 
 /**
@@ -80,14 +109,85 @@ export function hasShellMeta(command) {
 /**
  * Tokenise a metachar-free command into argv.
  *
- * Only reached for strings already proven metachar-free, so it only has to
- * handle runs of non-space tokens. Runs of spaces are collapsed (equivalent to
- * shell word splitting for this restricted input).
+ * **Load-bearing invariant:** this is only ever called on strings that
+ * `hasShellMeta` has already rejected for quotes and backslashes. Without that
+ * guarantee the plain whitespace split would be wrong, because real shell word
+ * splitting honours quoting (`a "b c"` is two words, not three). `eligibleHead`
+ * is the only caller and it checks `hasShellMeta` first; the assertion there
+ * makes the order impossible to lose silently in a refactor.
+ *
+ * Runs of spaces are collapsed, which is equivalent to shell word splitting for
+ * this restricted input. Only reached for metachar-free text, so it only has to
+ * handle runs of non-space tokens.
  * @param {string} command metachar-free command text.
  * @returns {string[]} argv, first element the command head.
  */
 export function splitArgv(command) {
   return command.trim().split(/\s+/).filter((token) => token.length > 0);
+}
+
+/**
+ * Whether `name` is a bare command name worth resolving.
+ *
+ * A name carrying a separator is already a path: letting it through would
+ * bypass the `.exe`-only rule that keeps MSYS shims out.
+ *
+ * @param {unknown} name candidate command head.
+ * @returns {boolean}
+ */
+function isBareName(name) {
+  if (typeof name !== 'string' || name.length === 0) return false;
+  return !name.includes('/') && !name.includes('\\');
+}
+
+/**
+ * Read `PATH` from an environment object, case-insensitively.
+ *
+ * Windows env keys are case-insensitive but case-preserving, so `Path` and
+ * `PATH` both occur; an exact-match lookup would miss whichever the caller has.
+ *
+ * @param {Record<string, string | undefined>} env environment to read from.
+ * @returns {string} raw PATH value, or '' when absent.
+ */
+function pathFrom(env) {
+  for (const [key, value] of Object.entries(env)) {
+    if (key.toUpperCase() === 'PATH') return value ?? '';
+  }
+  return '';
+}
+
+/**
+ * Whether `candidate` is an existing regular file.
+ *
+ * `existsSync` alone is not enough: a *directory* named `git.exe` would satisfy
+ * it, and the resulting spawn would fail at runtime instead of falling back to
+ * bash. Cheap stat, no throw.
+ *
+ * @param {string} candidate absolute path to test.
+ * @returns {boolean}
+ */
+function isExecutableFile(candidate) {
+  try {
+    return statSync(candidate).isFile();
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * First `PATH` directory holding a real `<name>.exe` file.
+ *
+ * @param {string} pathValue raw PATH value.
+ * @param {string} name bare command head, without extension.
+ * @returns {string | undefined} absolute `.exe` path, or undefined when none.
+ */
+function findOnPath(pathValue, name) {
+  for (const dir of pathValue.split(delimiter)) {
+    if (dir.length === 0) continue;
+    const candidate = join(dir, `${name}.exe`);
+    if (isExecutableFile(candidate)) return candidate;
+  }
+  return undefined;
 }
 
 /**
@@ -104,19 +204,8 @@ export function splitArgv(command) {
  */
 export function resolveExecutable(name, env = process.env, platform = process.platform) {
   if (platform !== 'win32') return undefined;
-  if (typeof name !== 'string' || name.length === 0) return undefined;
-  if (name.includes('/') || name.includes('\\')) return undefined;
-  let pathValue = '';
-  for (const [key, value] of Object.entries(env)) {
-    if (key.toUpperCase() === 'PATH') { pathValue = value ?? ''; break; }
-  }
-  if (pathValue.length === 0) return undefined;
-  for (const dir of pathValue.split(delimiter)) {
-    if (dir.length === 0) continue;
-    const candidate = join(dir, `${name}.exe`);
-    if (existsSync(candidate)) return candidate;
-  }
-  return undefined;
+  if (!isBareName(name)) return undefined;
+  return findOnPath(pathFrom(env), name);
 }
 
 /**
@@ -128,12 +217,17 @@ export function resolveExecutable(name, env = process.env, platform = process.pl
  *
  * @param {string} command raw command text.
  * @param {readonly string[]} allowlist permitted command heads.
+ * @param {string[]} tokens the already-split argv for `command`.
  * @returns {string | undefined} lowercased command head, or undefined.
  */
-function eligibleHead(command, allowlist) {
+function eligibleHead(command, allowlist, tokens) {
   if (hasShellMeta(command)) return undefined;
-  const tokens = splitArgv(command);
+  // Mirrors the preconditions `splitArgv` documents: metachar-free (so no
+  // quotes, hence plain whitespace splitting is correct) and no POSIX path
+  // argument (bash would have translated it, a direct spawn would not).
+  assert(tokens.every((token) => !hasShellMeta(token)), 'splitArgv requires metachar-free tokens');
   if (tokens.length === 0) return undefined;
+  if (hasPosixPathArgument(tokens)) return undefined;
   const head = tokens[0].toLowerCase();
   return allowlist.includes(head) ? head : undefined;
 }
@@ -171,9 +265,10 @@ function decisionInputs(options = {}) {
  */
 export function fastpathArgv(options) {
   const { command, env, platform, allowlist } = decisionInputs(options);
-  const head = eligibleHead(command, allowlist);
+  const tokens = splitArgv(command);
+  const head = eligibleHead(command, allowlist, tokens);
   if (head === undefined) return undefined;
   const exe = resolveExecutable(head, env, platform);
   if (exe === undefined) return undefined;
-  return { argv: [exe, ...splitArgv(command).slice(1)] };
+  return { argv: [exe, ...tokens.slice(1)] };
 }
