@@ -39,6 +39,7 @@
 import { LocalBashExecutor } from '@deepseek-ai/dsh-bash-local';
 import z from '@deepseek-ai/schemastery';
 import { gitBashArgv, resolveGitBashPath } from './bash.js';
+import { fastpathArgv } from './fastpath.js';
 
 /** Default SIGTERM-to-SIGKILL grace period, matching the POSIX executor. */
 const DEFAULT_GRACE_MS = 3000;
@@ -87,6 +88,14 @@ export class GitBashExecutor extends LocalBashExecutor {
     maxSpillBytes: z.number().default(DEFAULT_MAX_SPILL_BYTES).volatile(),
     /** Grace period for kill escalation and inherited pipes. */
     graceMs: z.number().default(DEFAULT_GRACE_MS).volatile(),
+    /**
+     * Skip the bash layer for provably-safe commands (no shell metachar and a
+     * native `.exe` head on an allowlist) and spawn the `.exe` directly. The
+     * allowlist deliberately excludes MSYS tools (`ls`, `grep`, ...) and `.cmd`
+     * shims (`npm`, ...), so anything unproven falls back to bash unchanged.
+     * Default `true`; set `false` for a strict "always through bash" baseline.
+     */
+    directExec: z.boolean().default(true).volatile(),
   });
 
   /**
@@ -115,11 +124,34 @@ export class GitBashExecutor extends LocalBashExecutor {
    */
   async execute(spec) {
     const loginShell = this.config.loginShell?.get?.() ?? this.config.loginShell;
+    const direct = this.directArgv(spec);
+    if (direct !== undefined) return this.executeArgv(spec, direct);
     return this.executeArgv(spec, gitBashArgv({
       bashPath: this.bashPath,
       loginShell: loginShell === true,
       command: spec.command,
     }));
+  }
+
+  /**
+   * The direct-exec argv for a spec, or undefined when bash must be used.
+   *
+   * Fast path: a metachar-free command whose head is a native `.exe` on the
+   * allowlist is spawned with `shell:false`, skipping the bash layer (~75-200ms
+   * saved per call). Anything `fastpathArgv` cannot prove safe (MSYS tools,
+   * `.cmd` shims, pipes/redirects/globs) comes back undefined and falls through
+   * to the unchanged bash path in `execute`.
+   *
+   * `directExec: false` disables the fast path entirely, restoring the strict
+   * "always through bash" behaviour.
+   *
+   * @param {import('@deepseek-ai/dsh-shell').ShellExecSpec} spec resolved spec.
+   * @returns {string[] | undefined} argv to spawn directly, or undefined.
+   */
+  directArgv(spec) {
+    const directExec = this.config.directExec?.get?.() ?? this.config.directExec;
+    if (directExec === false) return undefined;
+    return fastpathArgv({ command: spec.command, env: spec.env ?? process.env })?.argv;
   }
 }
 

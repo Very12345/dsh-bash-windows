@@ -8,7 +8,7 @@ const ROUTE = '/plugins/git-bash-windows';
 
 export class GitBashSwitcher {
   static inject = ['agents', 'agentPresets', 'settings', 'profileContext'];
-  static Config = z.object({ enabled: z.boolean().default(false).volatile(), bashPath: z.string(), loginShell: z.boolean().default(false) });
+  static Config = z.object({ enabled: z.boolean().default(false).volatile(), bashPath: z.string(), loginShell: z.boolean().default(false), directExec: z.boolean().default(true) });
   constructor(ctx, config, preferences = new SwitchPreferences(ctx.get('profileContext'))) {
     this.ctx = ctx; this.config = config; this.records = new Map(); this.creating = new Map(); this.pending = Promise.resolve(); this.closed = false; this.error = '';
     this.preferences=preferences;this.storedEnabled=undefined;
@@ -25,7 +25,7 @@ export class GitBashSwitcher {
     void this.synchronize().catch((error) => { this.error = error.message; ctx.logger.warn(error); });
   }
   get enabled() { return this.storedEnabled ?? (valueOf(this.config.enabled) === true); }
-  options() { return { bashPath: valueOf(this.config.bashPath), loginShell: valueOf(this.config.loginShell) === true }; }
+  options() { return { bashPath: valueOf(this.config.bashPath), loginShell: valueOf(this.config.loginShell) === true, directExec: valueOf(this.config.directExec) !== false }; }
   async synchronizeAgent(agent) {
     await this.ready;
     if (this.closed) return;
