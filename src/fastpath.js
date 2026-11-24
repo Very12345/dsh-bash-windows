@@ -66,15 +66,27 @@ function hasPosixPathArgument(tokens) {
 /**
  * Command heads allowed on the fast path.
  *
- * Every entry must be a real Windows `.exe` reachable on `PATH` (not an MSYS
- * shim, not a `.cmd`), which the resolver re-checks at runtime. An unlisted but
- * safe command simply pays the old bash cost — the failure mode of an
- * incomplete list is "no speedup", never "wrong output".
+ * ## The invariant every entry must satisfy
+ *
+ * Listing a command is a claim that **running it without bash is equivalent to
+ * running it with bash** for the commands the guard lets through. The guard
+ * enforces this by rejecting shell syntax and POSIX-path arguments, because
+ * bash is what translates `/c/x` into `C:\x` for the child. Measured: spawning
+ * `git.exe` with `-C /tmp/x` fails outright while the bash-wrapped form works.
+ *
+ * So an entry is only safe if it needs no path translation *and* is reachable
+ * as a real `.exe`. Anything that interprets POSIX paths itself, or exists only
+ * as a `.cmd`, must not be listed. `test/fastpath.test.js` pins this: the
+ * allowlist is asserted to contain only names that resolve to a real native
+ * `.exe` in the test environment, and to exclude the known-bad families.
  *
  * `.cmd`-only tools are deliberately absent: `tsc`, `eslint`, `prettier`,
  * `vitest`, `jest` and `mocha` are all `.cmd` shims on Windows, so they can
  * never resolve to a native `.exe`. Listing them would be dead weight that
  * suggests support the fast path cannot deliver.
+ *
+ * An unlisted but safe command simply pays the old bash cost — the failure mode
+ * of an incomplete list is "no speedup", never "wrong output".
  */
 export const FASTPATH_COMMANDS = Object.freeze([
   'git',

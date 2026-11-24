@@ -5,7 +5,7 @@
  * without a composed harness.
  */
 import assert from 'node:assert/strict';
-import { mkdirSync, mkdtempSync, rmSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, rmSync, statSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { test } from 'node:test';
@@ -17,6 +17,7 @@ import {
   splitArgv,
   resolveExecutable,
 } from '../src/fastpath.js';
+import { gitBashArgv } from '../src/bash.js';
 
 // A fake Windows env whose single PATH dir contains the exes we ask for:
 // resolveExecutable checks real files, so point at a real one (`node.exe`'s dir).
@@ -131,4 +132,81 @@ test('resolveExecutable ignores a directory named like an exe', () => {
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
+});
+
+test('every allowlisted entry either resolves to a native .exe or is absent', () => {
+  // The allowlist is documented as "names that can resolve to a real .exe".
+  // This pins the invariant without requiring every tool to be installed: each
+  // name must either resolve to a file on this machine's PATH, or be genuinely
+  // absent (undefined) -- never resolve to a directory or a `.cmd`.
+  for (const name of FASTPATH_COMMANDS) {
+    const exe = resolveExecutable(name);
+    if (exe === undefined) continue; // not installed here; nothing to assert
+    assert.match(exe, /\.exe$/i, `${name} must resolve to a .exe, got ${exe}`);
+    assert.equal(statSync(exe).isFile(), true, `${name} must resolve to a file`);
+  }
+});
+
+test('known path-translating and shim families stay off the allowlist', () => {
+  // Regression guard for the invariant documented on FASTPATH_COMMANDS:
+  // anything that needs bash to translate POSIX paths, or that exists only as a
+  // .cmd shim, must never be added. If a future entry needs a path argument it
+  // belongs on the bash path by definition.
+  const forbidden = [
+    // MSYS tools that only understand POSIX paths
+    'ls', 'grep', 'head', 'tail', 'cat', 'sed', 'awk', 'find', 'xargs', 'cp', 'mv', 'rm', 'mkdir',
+    // .cmd-only shims
+    'npm', 'pnpm', 'npx', 'yarn', 'tsc', 'eslint', 'prettier', 'vitest', 'jest', 'mocha',
+    // names that would collide with a shell builtin
+    'cd', 'echo', 'export', 'set', 'test', 'true', 'false',
+  ];
+  for (const name of forbidden) {
+    assert.equal(
+      FASTPATH_COMMANDS.includes(name),
+      false,
+      `${name} must not be on the fast-path allowlist`,
+    );
+  }
+});
+
+test('a rejected command is handed to bash verbatim', () => {
+  // The safety property the allowlist promises is "wrong output is impossible".
+  // The other half of that promise lives on the reject side: the command must
+  // reach bash byte-identical, with no rewriting, quoting or argv splitting of
+  // our own. This pins the contract between the guard and `gitBashArgv`
+  // without needing to spawn a process.
+  const bashPath = 'C:\Program Files\Git\bin\bash.exe';
+  const rejected = [
+    'git -C /tmp/repo status',
+    'node /c/x.js',
+    'git status | cat',
+    'echo $HOME',
+    'git "log" -1',
+    'ls *.ts',
+    'cd /tmp && ls',
+  ];
+  for (const command of rejected) {
+    assert.equal(
+      fastpathArgv({ command, env: WIN_ENV, platform: 'win32' }),
+      undefined,
+      `expected bash fallback: ${command}`,
+    );
+    // The unchanged bash path receives the command text as-is.
+    assert.deepEqual(gitBashArgv({ bashPath, command }), [bashPath, '-c', command]);
+    assert.deepEqual(gitBashArgv({ bashPath, loginShell: true, command }), [bashPath, '-lc', command]);
+  }
+});
+
+test('directExec:false disables the fast path entirely', () => {
+  // Mirrors `directArgv`'s guard: the config flag is checked before any
+  // detection, so `false` restores the strict always-through-bash behaviour.
+  const directArgv = (config) => {
+    const directExec = config.directExec?.get?.() ?? config.directExec;
+    if (directExec === false) return undefined;
+    return fastpathArgv({ command: 'node -v', env: WIN_ENV, platform: 'win32' })?.argv;
+  };
+  assert.equal(directArgv({ directExec: false }), undefined);
+  assert.ok(directArgv({ directExec: true }));
+  assert.ok(directArgv({ directExec: { get: () => true } }), 'getter form');
+  assert.equal(directArgv({ directExec: { get: () => false } }), undefined, 'getter false');
 });
